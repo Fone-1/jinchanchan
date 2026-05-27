@@ -6,7 +6,7 @@ app:
 
 # 当前赛季
 season:
-  current: "s14"
+  current: "s18_mode17"
 
 # ADB 配置（多套配置方案）
 adb:

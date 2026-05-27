@@ -7,3 +7,8 @@ build/
 *.spec
 .env
 *.log
+
+# 赛季数据文件（通过在线更新获取，不提交到 git）
+data/s*/
+models/s*/
+templates/s*/

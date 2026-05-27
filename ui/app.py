@@ -7,6 +7,7 @@ from core.config_manager import ConfigManager
 from ui.pages.status_page import StatusPage
 from ui.pages.log_page import LogPage
 from ui.pages.settings_page import SettingsPage
+from ui.pages.data_page import DataPage
 
 
 class App(ctk.CTk):
@@ -47,6 +48,7 @@ class App(ctk.CTk):
         self._pages: dict[str, ctk.CTkFrame] = {}
         self._pages["status"] = StatusPage(self._content_frame, self.event_bus)
         self._pages["log"] = LogPage(self._content_frame, self.event_bus)
+        self._pages["data"] = DataPage(self._content_frame, self.event_bus, self.config_mgr)
         self._pages["settings"] = SettingsPage(self._content_frame, self.event_bus, self.config_mgr)
 
         for page in self._pages.values():
@@ -62,6 +64,7 @@ class App(ctk.CTk):
         nav_items = [
             ("status", "实时状态"),
             ("log", "操作日志"),
+            ("data", "数据管理"),
         ]
         for key, label in nav_items:
             btn = ctk.CTkButton(

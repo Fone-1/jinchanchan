@@ -58,7 +58,11 @@ class ConfigManager:
 
     @property
     def season(self) -> str:
-        return self.get("season.current", "s14")
+        return self.get("season.current", "s18_mode17")
+
+    def set_season(self, dir_name: str) -> None:
+        self.set("season.current", dir_name)
+        self.save()
 
     # --- ADB Profile 管理 ---
 
