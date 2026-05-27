@@ -1,0 +1,9 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(dir \"d:\\\\jinchanchan\")",
+      "Bash(git init *)",
+      "Bash(bash \"C:\\\\Users\\\\fhj\\\\.claude\\\\skills\\\\git-pushing\\\\scripts\\\\smart_commit.sh\" \"feat: init project with plugin architecture and MVP core\")"
+    ]
+  }
+}
