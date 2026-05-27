@@ -3,7 +3,19 @@
     "allow": [
       "Bash(dir \"d:\\\\jinchanchan\")",
       "Bash(git init *)",
-      "Bash(bash \"C:\\\\Users\\\\fhj\\\\.claude\\\\skills\\\\git-pushing\\\\scripts\\\\smart_commit.sh\" \"feat: init project with plugin architecture and MVP core\")"
+      "Bash(bash \"C:\\\\Users\\\\fhj\\\\.claude\\\\skills\\\\git-pushing\\\\scripts\\\\smart_commit.sh\" \"feat: init project with plugin architecture and MVP core\")",
+      "Bash(mkdir -p \"e:/jinchanchan/data/fetcher\")",
+      "Bash(python -c \"from data import fetcher; print\\('get_local_modes:', fetcher.get_local_modes\\); print\\('list_all_modes:', fetcher.list_all_modes\\); print\\('fetch_mode_data:', fetcher.fetch_mode_data\\); print\\('delete_mode:', fetcher.delete_mode\\)\")",
+      "Bash(python -c \"from data import fetcher; modes = fetcher.get_local_modes\\(\\); print\\(f'Found {len\\(modes\\)} local modes:', [m[\\\\\"dir_name\\\\\"] for m in modes]\\)\")",
+      "Bash(adb devices *)",
+      "Bash(where adb.exe)",
+      "Bash(netstat -ano)",
+      "Bash(python -c ' *)",
+      "Bash(timeout 10 python -c ' *)",
+      "Bash(bash \"C:/Users/17592/.claude/skills/git-pushing/scripts/smart_commit.sh\" \"refactor: split fetcher module and fix ADB connection issues\")"
+    ],
+    "additionalDirectories": [
+      "e:\\jinchanchan\\data"
     ]
   }
 }

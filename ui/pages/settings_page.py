@@ -1,5 +1,6 @@
 """设置页 — 模拟器连接配置管理"""
 
+import threading
 import customtkinter as ctk
 from tkinter import messagebox
 from typing import Any
@@ -155,7 +156,7 @@ class SettingsPage(ctk.CTkFrame):
         for key, val in EMULATOR_PRESETS.items():
             if val["label"] == label:
                 self._port_entry.delete(0, "end")
-                self._port_entry.insert(0, str(val["port"]))
+                self._port_entry.insert(0, str(val["device_port"]))
                 return
 
     def _new_profile(self):
@@ -192,17 +193,21 @@ class SettingsPage(ctk.CTkFrame):
         self._status_dot.configure(text="● 测试中...", text_color="yellow")
         self._diag_detail.configure(text="")
         self._diag_extra.configure(text="")
-        self.update()
 
         profile = self._read_form()
-        if self._adb_plugin:
-            result = self._adb_plugin.test_connection(profile)
-        else:
-            # 没有插件引用时直接用 adbutils 测试
-            from plugins.adb_connector.plugin import AdbConnectorPlugin
-            temp = AdbConnectorPlugin(self.event_bus, profile)
-            result = temp.test_connection()
 
+        def _run():
+            if self._adb_plugin:
+                result = self._adb_plugin.test_connection(profile)
+            else:
+                from plugins.adb_connector.plugin import AdbConnectorPlugin
+                temp = AdbConnectorPlugin(self.event_bus, profile)
+                result = temp.test_connection()
+            self.after(0, self._show_test_result, result)
+
+        threading.Thread(target=_run, daemon=True).start()
+
+    def _show_test_result(self, result: dict):
         if result["success"]:
             self._status_dot.configure(text="● 已连接", text_color="green")
             self._diag_detail.configure(text=f"{result['model']}  序列: {result['serial']}")

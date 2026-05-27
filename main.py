@@ -53,14 +53,15 @@ def main():
     })
 
     plugin_mgr.init_all()
-    plugin_mgr.start_all()
 
+    # 先创建 UI，再启动插件，避免 ADB 连接阻塞导致窗口出不来
     app = App(event_bus, config_mgr.data, config_mgr)
 
-    # 将 ADB 插件引用传给设置页
     adb_plugin = plugin_mgr.get("adb_connector")
     if app.settings_page and adb_plugin:
         app.settings_page.set_adb_plugin(adb_plugin)
+
+    plugin_mgr.start_all()
 
     def on_closing():
         plugin_mgr.stop_all()

@@ -12,10 +12,10 @@ from core.base_plugin import BasePlugin
 logger = logging.getLogger(__name__)
 
 EMULATOR_PRESETS = {
-    "mumu": {"label": "MuMu (默认7555)", "port": 7555},
-    "leidian": {"label": "雷电 (默认5555)", "port": 5555},
-    "yeshen": {"label": "夜神 (默认62001)", "port": 62001},
-    "custom": {"label": "自定义", "port": 5555},
+    "mumu": {"label": "MuMu (默认7555)", "device_port": 7555},
+    "leidian": {"label": "雷电 (默认5555)", "device_port": 5555},
+    "yeshen": {"label": "夜神 (默认62001)", "device_port": 62001},
+    "custom": {"label": "自定义", "device_port": 5555},
 }
 
 
@@ -34,13 +34,13 @@ class AdbConnectorPlugin(BasePlugin):
 
     def _init_client(self) -> None:
         host = self.config.get("host", "127.0.0.1")
-        port = self.config.get("port", 7555)
-        self._client = AdbClient(host=host, port=port)
-        logger.info(f"ADB 客户端初始化: {host}:{port}")
+        self._client = AdbClient(host=host, port=5037)
+        logger.info(f"ADB 客户端初始化: {host}:5037")
 
     def start(self) -> None:
         self._running = True
-        self._connect()
+        # 首次连接放到后台线程，避免阻塞 UI 启动
+        threading.Thread(target=self._connect, daemon=True).start()
         self._start_heartbeat()
 
     def stop(self) -> None:
@@ -61,16 +61,13 @@ class AdbConnectorPlugin(BasePlugin):
 
     def _connect(self) -> None:
         serial = self.config.get("device_serial")
+        if not serial:
+            # 从 host:port 构造设备序列号
+            host = self.config.get("host", "127.0.0.1")
+            port = self.config.get("port", 7555)
+            serial = f"{host}:{port}"
         try:
-            if serial:
-                self._device = self._client.device(serial)
-            else:
-                devices = self._client.device_list()
-                if not devices:
-                    logger.warning("未检测到 ADB 设备")
-                    self.event_bus.emit("device_disconnected")
-                    return
-                self._device = devices[0]
+            self._device = self._client.device(serial)
             info = self._device.shell("getprop ro.product.model").strip()
             logger.info(f"已连接设备: {self._device.serial} ({info})")
             self.event_bus.emit("device_connected", {"device": self._device})
@@ -84,7 +81,7 @@ class AdbConnectorPlugin(BasePlugin):
         cfg = test_config or self.config
         host = cfg.get("host", "127.0.0.1")
         port = cfg.get("port", 7555)
-        serial = cfg.get("device_serial")
+        serial = cfg.get("device_serial") or f"{host}:{port}"
 
         result = {
             "success": False,
@@ -97,7 +94,7 @@ class AdbConnectorPlugin(BasePlugin):
         }
 
         try:
-            client = AdbClient(host=host, port=port)
+            client = AdbClient(host=host, port=5037)
 
             # 测延迟
             t0 = time.perf_counter()
@@ -105,14 +102,7 @@ class AdbConnectorPlugin(BasePlugin):
             result["latency_ms"] = int((time.perf_counter() - t0) * 1000)
             result["adb_version"] = str(server_version)
 
-            if serial:
-                device = client.device(serial)
-            else:
-                devices = client.device_list()
-                if not devices:
-                    result["error"] = "未检测到设备"
-                    return result
-                device = devices[0]
+            device = client.device(serial)
 
             result["serial"] = device.serial
             result["model"] = device.shell("getprop ro.product.model").strip()
@@ -160,6 +150,6 @@ class AdbConnectorPlugin(BasePlugin):
     def get_config_schema() -> dict[str, Any]:
         return {
             "host": {"type": "string", "default": "127.0.0.1", "label": "ADB 地址"},
-            "port": {"type": "integer", "default": 7555, "label": "ADB 端口"},
-            "device_serial": {"type": "string", "default": "", "label": "设备序列号（留空自动检测）"},
+            "port": {"type": "integer", "default": 7555, "label": "设备端口"},
+            "device_serial": {"type": "string", "default": "", "label": "设备序列号（留空自动使用 host:port）"},
         }

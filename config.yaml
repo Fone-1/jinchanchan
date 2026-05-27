@@ -1,45 +1,30 @@
-# 金铲铲智能助手 - 全局配置
-
-app:
-  name: "金铲铲智能助手"
-  version: "0.1.0"
-
-# 当前赛季
-season:
-  current: "s18_mode17"
-
-# ADB 配置（多套配置方案）
 adb:
+  active_profile: MuMu 本机
   profiles:
-    - name: "MuMu 本机"
-      emulator: "mumu"
-      host: "127.0.0.1"
-      port: 7555
-      device_serial: null
-  active_profile: "MuMu 本机"
-
-# 截图配置
-screenshot:
-  interval_ms: 500  # 截图间隔（毫秒）
-  region: null       # null 表示全屏截图，否则指定 [x, y, w, h]
-
-# 模拟器分辨率
-emulator:
-  width: 1280
-  height: 720
-
-# 自动化模式: "semi_auto" | "full_auto"
+  - device_serial: null
+    emulator: mumu
+    host: 127.0.0.1
+    name: MuMu 本机
+    port: 16416
+app:
+  name: 金铲铲智能助手
+  version: 0.1.0
 automation:
-  mode: "semi_auto"
-  # 各操作独立开关
   auto_buy: true
-  auto_position: false
-  auto_level_up: false
-  auto_refresh: false
-  auto_equip: false
   auto_draft: false
-
-# UI 配置
+  auto_equip: false
+  auto_level_up: false
+  auto_position: false
+  auto_refresh: false
+  mode: semi_auto
+emulator:
+  height: 720
+  width: 1280
+screenshot:
+  interval_ms: 500
+  region: null
+season:
+  current: s18_mode17
 ui:
-  theme: "dark"        # "dark" | "light"
   scale: 1.0
+  theme: dark
