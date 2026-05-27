@@ -29,6 +29,8 @@ class AdbConnectorPlugin(BasePlugin):
         self._heartbeat_thread: threading.Thread | None = None
         self._stop_heartbeat = threading.Event()
 
+        self.event_bus.on("request_adb_reconnect", self._on_request_reconnect)
+
     def init(self) -> None:
         self._init_client()
 
@@ -58,6 +60,15 @@ class AdbConnectorPlugin(BasePlugin):
         self._init_client()
         self._stop_heartbeat.clear()
         self.start()
+
+    def _on_request_reconnect(self, _data=None) -> None:
+        if not self._running:
+            return
+        logger.warning("收到重新连接 ADB 的请求，正在断开当前连接并重新建立连接...")
+        self._device = None
+        self.event_bus.emit("device_disconnected")
+        # 异步执行连接，避免卡住
+        threading.Thread(target=self._connect, daemon=True).start()
 
     def _connect(self) -> None:
         serial = self.config.get("device_serial")

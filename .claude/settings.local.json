@@ -12,7 +12,10 @@
       "Bash(netstat -ano)",
       "Bash(python -c ' *)",
       "Bash(timeout 10 python -c ' *)",
-      "Bash(bash \"C:/Users/17592/.claude/skills/git-pushing/scripts/smart_commit.sh\" \"refactor: split fetcher module and fix ADB connection issues\")"
+      "Bash(bash \"C:/Users/17592/.claude/skills/git-pushing/scripts/smart_commit.sh\" \"refactor: split fetcher module and fix ADB connection issues\")",
+      "Bash(python -c \"from paddleocr import PaddleOCR; print\\('PaddleOCR available'\\)\")",
+      "Bash(pip install *)",
+      "Bash(bash skills/git-pushing/scripts/smart_commit.sh)"
     ],
     "additionalDirectories": [
       "e:\\jinchanchan\\data"

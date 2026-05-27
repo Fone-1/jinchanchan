@@ -21,7 +21,7 @@ emulator:
   height: 720
   width: 1280
 screenshot:
-  interval_ms: 500
+  interval_ms: 1000
   region: null
 season:
   current: s18_mode17
