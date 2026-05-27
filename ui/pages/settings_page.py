@@ -2,7 +2,7 @@
 
 import threading
 import customtkinter as ctk
-from tkinter import messagebox
+from tkinter import messagebox, filedialog
 from typing import Any
 
 from core.event_bus import EventBus
@@ -25,9 +25,29 @@ class SettingsPage(ctk.CTkFrame):
     def _build(self):
         self.grid_columnconfigure(0, weight=1)
 
+        # === ADB 路径配置 ===
+        adb_section = ctk.CTkFrame(self)
+        adb_section.grid(row=0, column=0, sticky="nsew", padx=5, pady=5)
+        adb_section.grid_columnconfigure(1, weight=1)
+
+        ctk.CTkLabel(adb_section, text="ADB 路径配置", font=("", 16, "bold")).grid(
+            row=0, column=0, columnspan=3, sticky="w", padx=15, pady=(15, 10)
+        )
+
+        ctk.CTkLabel(adb_section, text="ADB 路径:").grid(row=1, column=0, sticky="e", padx=(15, 5), pady=5)
+        self._adb_path_entry = ctk.CTkEntry(adb_section, width=400, placeholder_text="留空使用内置 ADB")
+        self._adb_path_entry.grid(row=1, column=1, sticky="ew", padx=5, pady=5)
+        ctk.CTkButton(adb_section, text="浏览...", width=70, command=self._browse_adb_path).grid(
+            row=1, column=2, padx=(5, 15), pady=5
+        )
+
+        ctk.CTkLabel(adb_section, text="指定 adb.exe 路径，留空则使用 adbutils 内置 ADB", text_color="gray").grid(
+            row=2, column=0, columnspan=3, sticky="w", padx=15, pady=(0, 15)
+        )
+
         # === ADB 连接配置区域 ===
         section = ctk.CTkFrame(self)
-        section.grid(row=0, column=0, sticky="nsew", padx=5, pady=5)
+        section.grid(row=1, column=0, sticky="nsew", padx=5, pady=5)
         section.grid_columnconfigure(1, weight=1)
 
         ctk.CTkLabel(section, text="模拟器连接配置", font=("", 16, "bold")).grid(
@@ -98,7 +118,22 @@ class SettingsPage(ctk.CTkFrame):
             row=row, column=0, columnspan=3, sticky="w", padx=15, pady=(10, 15)
         )
 
+    def _browse_adb_path(self):
+        path = filedialog.askopenfilename(
+            title="选择 adb.exe",
+            filetypes=[("ADB 可执行文件", "adb.exe"), ("所有文件", "*.*")],
+        )
+        if path:
+            self._adb_path_entry.delete(0, "end")
+            self._adb_path_entry.insert(0, path)
+
     def _load_profiles(self):
+        # 加载 ADB 路径
+        adb_path = self.config_mgr.get_adb_path()
+        self._adb_path_entry.delete(0, "end")
+        if adb_path:
+            self._adb_path_entry.insert(0, adb_path)
+
         profiles = self.config_mgr.get_adb_profiles()
         names = [p.get("name", "") for p in profiles]
         active = self.config_mgr.get("adb.active_profile", "")
@@ -223,6 +258,15 @@ class SettingsPage(ctk.CTkFrame):
         if not profile["name"]:
             messagebox.showwarning("提示", "配置名称不能为空")
             return
+
+        # 保存 ADB 路径
+        import os
+        adb_path = self._adb_path_entry.get().strip()
+        self.config_mgr.set_adb_path(adb_path)
+        if adb_path and os.path.isfile(adb_path):
+            os.environ["ADBUTILS_ADB_PATH"] = adb_path
+        elif "ADBUTILS_ADB_PATH" in os.environ:
+            del os.environ["ADBUTILS_ADB_PATH"]
 
         self.config_mgr.save_adb_profile(profile)
         self.config_mgr.set_active_adb_profile(profile["name"])

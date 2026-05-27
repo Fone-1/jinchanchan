@@ -56,6 +56,13 @@ class AdbConnectorPlugin(BasePlugin):
         """热重连：断开当前连接，用新配置重新连接"""
         logger.info(f"热重连: {new_config}")
         self.stop()
+        # 尝试关闭旧 ADB server，确保新路径生效
+        try:
+            if self._client:
+                self._client.server_kill()
+                logger.info("已关闭旧 ADB server")
+        except Exception:
+            pass
         self.config = new_config
         self._init_client()
         self._stop_heartbeat.clear()

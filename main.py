@@ -1,6 +1,7 @@
 """金铲铲智能助手 — 主入口"""
 
 import logging
+import os
 import sys
 from pathlib import Path
 
@@ -34,6 +35,13 @@ def main():
 
     config_mgr = ConfigManager()
     event_bus = EventBus()
+
+    # 应用用户自定义 ADB 路径（留空则使用 adbutils 内置 ADB）
+    adb_path = config_mgr.get_adb_path()
+    if adb_path and os.path.isfile(adb_path):
+        os.environ["ADBUTILS_ADB_PATH"] = adb_path
+        logger.info(f"使用自定义 ADB 路径: {adb_path}")
+
     plugin_mgr = PluginManager(event_bus, config_mgr.data)
 
     # ADB 插件使用活跃 profile 的配置

@@ -1,11 +1,12 @@
 adb:
+  path: ""
   active_profile: MuMu 本机
   profiles:
-  - device_serial: null
+  - device_serial: emulator-5556
     emulator: mumu
     host: 127.0.0.1
     name: MuMu 本机
-    port: 16416
+    port: 5556
 app:
   name: 金铲铲智能助手
   version: 0.1.0

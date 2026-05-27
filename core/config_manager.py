@@ -64,6 +64,16 @@ class ConfigManager:
         self.set("season.current", dir_name)
         self.save()
 
+    # --- ADB 路径管理 ---
+
+    def get_adb_path(self) -> str:
+        """获取用户配置的 ADB 路径，留空表示使用内置 ADB"""
+        return self.get("adb.path", "")
+
+    def set_adb_path(self, path: str) -> None:
+        self.set("adb.path", path)
+        self.save()
+
     # --- ADB Profile 管理 ---
 
     def get_adb_profiles(self) -> list[dict[str, Any]]:
