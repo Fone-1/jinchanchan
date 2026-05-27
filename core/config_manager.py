@@ -59,3 +59,37 @@ class ConfigManager:
     @property
     def season(self) -> str:
         return self.get("season.current", "s14")
+
+    # --- ADB Profile 管理 ---
+
+    def get_adb_profiles(self) -> list[dict[str, Any]]:
+        return self.get("adb.profiles", [])
+
+    def get_active_adb_profile(self) -> dict[str, Any]:
+        name = self.get("adb.active_profile", "")
+        for p in self.get_adb_profiles():
+            if p.get("name") == name:
+                return p
+        profiles = self.get_adb_profiles()
+        return profiles[0] if profiles else {}
+
+    def set_active_adb_profile(self, name: str) -> None:
+        self.set("adb.active_profile", name)
+
+    def save_adb_profile(self, profile: dict[str, Any]) -> None:
+        profiles = self.get_adb_profiles()
+        for i, p in enumerate(profiles):
+            if p.get("name") == profile.get("name"):
+                profiles[i] = profile
+                self.save()
+                return
+        profiles.append(profile)
+        self.set("adb.profiles", profiles)
+        self.save()
+
+    def delete_adb_profile(self, name: str) -> None:
+        profiles = [p for p in self.get_adb_profiles() if p.get("name") != name]
+        self.set("adb.profiles", profiles)
+        if self.get("adb.active_profile") == name and profiles:
+            self.set("adb.active_profile", profiles[0].get("name", ""))
+        self.save()

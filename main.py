@@ -4,7 +4,6 @@ import logging
 import sys
 from pathlib import Path
 
-# 确保项目根目录在 sys.path 中
 ROOT = Path(__file__).parent
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
@@ -33,13 +32,14 @@ def main():
     logger = logging.getLogger(__name__)
     logger.info("金铲铲智能助手启动中...")
 
-    # 初始化核心
     config_mgr = ConfigManager()
     event_bus = EventBus()
     plugin_mgr = PluginManager(event_bus, config_mgr.data)
 
-    # 注册插件
-    plugin_mgr.register(AdbConnectorPlugin, config_mgr.get("adb", {}))
+    # ADB 插件使用活跃 profile 的配置
+    adb_config = config_mgr.get_active_adb_profile()
+    plugin_mgr.register(AdbConnectorPlugin, adb_config)
+
     plugin_mgr.register(ScreenshotPlugin, config_mgr.get("screenshot", {}))
     plugin_mgr.register(RecognizerPlugin, {
         "season": config_mgr.season,
@@ -52,14 +52,16 @@ def main():
         "emulator_height": config_mgr.get("emulator.height", 720),
     })
 
-    # 初始化并启动插件
     plugin_mgr.init_all()
     plugin_mgr.start_all()
 
-    # 启动 UI
-    app = App(event_bus, config_mgr.data)
+    app = App(event_bus, config_mgr.data, config_mgr)
 
-    # 关闭时停止所有插件
+    # 将 ADB 插件引用传给设置页
+    adb_plugin = plugin_mgr.get("adb_connector")
+    if app.settings_page and adb_plugin:
+        app.settings_page.set_adb_plugin(adb_plugin)
+
     def on_closing():
         plugin_mgr.stop_all()
 

@@ -8,11 +8,15 @@ app:
 season:
   current: "s14"
 
-# ADB 配置
+# ADB 配置（多套配置方案）
 adb:
-  host: "127.0.0.1"
-  port: 7555
-  device_serial: null  # null 表示自动检测第一个设备
+  profiles:
+    - name: "MuMu 本机"
+      emulator: "mumu"
+      host: "127.0.0.1"
+      port: 7555
+      device_serial: null
+  active_profile: "MuMu 本机"
 
 # 截图配置
 screenshot:

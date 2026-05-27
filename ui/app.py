@@ -3,15 +3,18 @@
 import customtkinter as ctk
 
 from core.event_bus import EventBus
+from core.config_manager import ConfigManager
 from ui.pages.status_page import StatusPage
 from ui.pages.log_page import LogPage
+from ui.pages.settings_page import SettingsPage
 
 
 class App(ctk.CTk):
-    def __init__(self, event_bus: EventBus, config: dict):
+    def __init__(self, event_bus: EventBus, config: dict, config_mgr: ConfigManager):
         super().__init__()
         self.event_bus = event_bus
         self.config = config
+        self.config_mgr = config_mgr
 
         self.title(config.get("app", {}).get("name", "金铲铲智能助手"))
         self.geometry("960x640")
@@ -24,7 +27,6 @@ class App(ctk.CTk):
         self._bind_events()
 
     def _build_layout(self):
-        # 主容器分为左右两栏
         self.grid_columnconfigure(1, weight=1)
         self.grid_rowconfigure(0, weight=1)
 
@@ -45,6 +47,7 @@ class App(ctk.CTk):
         self._pages: dict[str, ctk.CTkFrame] = {}
         self._pages["status"] = StatusPage(self._content_frame, self.event_bus)
         self._pages["log"] = LogPage(self._content_frame, self.event_bus)
+        self._pages["settings"] = SettingsPage(self._content_frame, self.event_bus, self.config_mgr)
 
         for page in self._pages.values():
             page.grid(row=0, column=0, sticky="nsew", padx=10, pady=10)
@@ -52,11 +55,9 @@ class App(ctk.CTk):
         self._show_page("status")
 
     def _build_sidebar(self):
-        # 标题
         title = ctk.CTkLabel(self._sidebar, text="金铲铲助手", font=("", 18, "bold"))
         title.pack(pady=(20, 30), padx=10)
 
-        # 导航按钮
         self._nav_buttons: dict[str, ctk.CTkButton] = {}
         nav_items = [
             ("status", "实时状态"),
@@ -73,11 +74,23 @@ class App(ctk.CTk):
             btn.pack(fill="x", padx=10, pady=4)
             self._nav_buttons[key] = btn
 
-        # 底部模式切换
+        # 底部区域
         self._sidebar.pack_propagate(False)
         bottom_frame = ctk.CTkFrame(self._sidebar, fg_color="transparent")
         bottom_frame.pack(side="bottom", fill="x", padx=10, pady=10)
 
+        # 设置按钮（底部）
+        settings_btn = ctk.CTkButton(
+            bottom_frame,
+            text="设置",
+            anchor="w",
+            height=36,
+            command=lambda: self._show_page("settings"),
+        )
+        settings_btn.pack(fill="x", pady=(0, 8))
+        self._nav_buttons["settings"] = settings_btn
+
+        # 模式切换
         ctk.CTkLabel(bottom_frame, text="自动化模式:").pack(anchor="w")
         self._mode_switch = ctk.CTkSwitch(
             bottom_frame,
@@ -103,3 +116,7 @@ class App(ctk.CTk):
     def _on_close(self):
         self.event_bus.emit("app_closing")
         self.destroy()
+
+    @property
+    def settings_page(self) -> SettingsPage:
+        return self._pages.get("settings")
