@@ -34,7 +34,18 @@ def main():
     logger.info("金铲铲智能助手启动中...")
 
     config_mgr = ConfigManager()
-    event_bus = EventBus()
+
+    # 根据配置决定是否启用调试模式
+    debug_enabled = config_mgr.get("debug.enabled", False)
+    debug_manager = None
+
+    if debug_enabled:
+        from core.debug_event_bus import DebugEventBus
+        from core.debug_manager import DebugManager
+        event_bus = DebugEventBus()
+        logger.info("调试模式已开启，使用 DebugEventBus")
+    else:
+        event_bus = EventBus()
 
     # 应用用户自定义 ADB 路径（留空则使用 adbutils 内置 ADB）
     adb_path = config_mgr.get_adb_path()
@@ -53,6 +64,7 @@ def main():
         "season": config_mgr.season,
         "emulator_width": config_mgr.get("emulator.width", 1280),
         "emulator_height": config_mgr.get("emulator.height", 720),
+        "debug": config_mgr.get("recognizer.debug", False),
     })
     plugin_mgr.register(DecisionEnginePlugin, config_mgr.get("automation", {}))
     plugin_mgr.register(ActionExecutorPlugin, {
@@ -63,7 +75,10 @@ def main():
     plugin_mgr.init_all()
 
     # 先创建 UI，再启动插件，避免 ADB 连接阻塞导致窗口出不来
-    app = App(event_bus, config_mgr.data, config_mgr)
+    if debug_enabled:
+        debug_manager = DebugManager(event_bus, plugin_mgr)
+
+    app = App(event_bus, config_mgr.data, config_mgr, debug_manager)
 
     adb_plugin = plugin_mgr.get("adb_connector")
     if app.settings_page and adb_plugin:

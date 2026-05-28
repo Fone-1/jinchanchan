@@ -133,6 +133,13 @@ class ActionExecutorPlugin(BasePlugin):
         self._device.shell(f"input swipe {x1} {y1} {x2} {y2} {duration}")
         logger.debug(f"拖拽: ({x1},{y1}) -> ({x2},{y2})")
 
+    def get_debug_info(self) -> dict[str, Any]:
+        return {
+            "has_device": self._device is not None,
+            "queue_size": self._queue.qsize(),
+            "worker_alive": self._worker_thread.is_alive() if self._worker_thread else False,
+        }
+
     @staticmethod
     def get_config_schema() -> dict[str, Any]:
         return {

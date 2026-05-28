@@ -17,8 +17,10 @@ class DecisionEnginePlugin(BasePlugin):
         self._auto_buy = config.get("auto_buy", True)
         self._target_champions: list[str] = []  # 目标阵容弈子列表
         self._pending_confirm: dict[str, Any] | None = None
+        self._task_enabled = False
 
         self.event_bus.on("game_state_updated", self._on_game_state)
+        self.event_bus.on("task_toggled", self._on_task_toggled)
 
     def init(self) -> None:
         logger.info("决策引擎初始化完成")
@@ -28,6 +30,10 @@ class DecisionEnginePlugin(BasePlugin):
 
     def stop(self) -> None:
         self._running = False
+
+    def _on_task_toggled(self, enabled: bool) -> None:
+        self._task_enabled = enabled
+        logger.info(f"决策引擎{'已启动' if enabled else '已停止'}")
 
     def set_target_champions(self, names: list[str]) -> None:
         """设置目标阵容弈子列表"""
@@ -45,7 +51,7 @@ class DecisionEnginePlugin(BasePlugin):
         self._pending_confirm = None
 
     def _on_game_state(self, state: dict[str, Any]) -> None:
-        if not self._running:
+        if not self._running or not self._task_enabled:
             return
 
         shop = state.get("shop_champions", [])
@@ -83,6 +89,15 @@ class DecisionEnginePlugin(BasePlugin):
             # 半自动模式：发送到 UI 等待确认
             self._pending_confirm = action
             self.event_bus.emit("action_pending_confirm", action)
+
+    def get_debug_info(self) -> dict[str, Any]:
+        return {
+            "mode": self._mode,
+            "auto_buy": self._auto_buy,
+            "task_enabled": self._task_enabled,
+            "target_champions": self._target_champions,
+            "pending_confirm": self._pending_confirm,
+        }
 
     @staticmethod
     def get_config_schema() -> dict[str, Any]:

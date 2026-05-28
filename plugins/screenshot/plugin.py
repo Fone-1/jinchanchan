@@ -89,6 +89,15 @@ class ScreenshotPlugin(BasePlugin):
             img = img[y:y + h, x:x + w]
         return img
 
+    def get_debug_info(self) -> dict[str, Any]:
+        return {
+            "interval_seconds": self._interval,
+            "region": self._region,
+            "consecutive_black_frames": self._consecutive_black_frames,
+            "has_device": self._device is not None,
+            "capture_thread_alive": self._thread.is_alive() if self._thread else False,
+        }
+
     @staticmethod
     def get_config_schema() -> dict[str, Any]:
         return {

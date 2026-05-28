@@ -11,11 +11,12 @@ from ui.pages.data_page import DataPage
 
 
 class App(ctk.CTk):
-    def __init__(self, event_bus: EventBus, config: dict, config_mgr: ConfigManager):
+    def __init__(self, event_bus: EventBus, config: dict, config_mgr: ConfigManager, debug_manager=None):
         super().__init__()
         self.event_bus = event_bus
         self.config = config
         self.config_mgr = config_mgr
+        self._debug_manager = debug_manager
 
         self.title(config.get("app", {}).get("name", "金铲铲智能助手"))
         self.geometry("960x640")
@@ -51,6 +52,10 @@ class App(ctk.CTk):
         self._pages["data"] = DataPage(self._content_frame, self.event_bus, self.config_mgr)
         self._pages["settings"] = SettingsPage(self._content_frame, self.event_bus, self.config_mgr)
 
+        if self._debug_manager:
+            from ui.pages.debug_page import DebugPage
+            self._pages["debug"] = DebugPage(self._content_frame, self._debug_manager)
+
         for page in self._pages.values():
             page.grid(row=0, column=0, sticky="nsew", padx=10, pady=10)
 
@@ -58,7 +63,20 @@ class App(ctk.CTk):
 
     def _build_sidebar(self):
         title = ctk.CTkLabel(self._sidebar, text="金铲铲助手", font=("", 18, "bold"))
-        title.pack(pady=(20, 30), padx=10)
+        title.pack(pady=(20, 10), padx=10)
+
+        # 总开关 — 默认关闭
+        self._task_running = False
+        self._task_btn = ctk.CTkButton(
+            self._sidebar,
+            text="▶ 启动任务",
+            height=44,
+            font=("", 16, "bold"),
+            fg_color="green",
+            hover_color="darkgreen",
+            command=self._toggle_task,
+        )
+        self._task_btn.pack(fill="x", padx=10, pady=(0, 20))
 
         self._nav_buttons: dict[str, ctk.CTkButton] = {}
         nav_items = [
@@ -66,6 +84,8 @@ class App(ctk.CTk):
             ("log", "操作日志"),
             ("data", "数据管理"),
         ]
+        if self._debug_manager:
+            nav_items.append(("debug", "调试面板"))
         for key, label in nav_items:
             btn = ctk.CTkButton(
                 self._sidebar,
@@ -108,6 +128,14 @@ class App(ctk.CTk):
             page.tkraise()
             for key, btn in self._nav_buttons.items():
                 btn.configure(fg_color=("gray75", "gray25") if key == name else ("gray85", "gray15"))
+
+    def _toggle_task(self):
+        self._task_running = not self._task_running
+        if self._task_running:
+            self._task_btn.configure(text="■ 停止任务", fg_color="red", hover_color="darkred")
+        else:
+            self._task_btn.configure(text="▶ 启动任务", fg_color="green", hover_color="darkgreen")
+        self.event_bus.emit("task_toggled", self._task_running)
 
     def _toggle_mode(self):
         mode = "full_auto" if self._mode_switch.get() else "semi_auto"

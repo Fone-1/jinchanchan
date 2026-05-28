@@ -15,7 +15,9 @@
       "Bash(bash \"C:/Users/17592/.claude/skills/git-pushing/scripts/smart_commit.sh\" \"refactor: split fetcher module and fix ADB connection issues\")",
       "Bash(python -c \"from paddleocr import PaddleOCR; print\\('PaddleOCR available'\\)\")",
       "Bash(pip install *)",
-      "Bash(bash skills/git-pushing/scripts/smart_commit.sh)"
+      "Bash(bash skills/git-pushing/scripts/smart_commit.sh)",
+      "Bash(python -c \"import paddle; print\\('paddle:', paddle.__version__\\); import paddleocr; print\\('paddleocr:', paddleocr.__version__\\)\")",
+      "Bash(bash C:/Users/17592/.claude/skills/git-pushing/scripts/smart_commit.sh \"feat: add debug panel and optimize recognizer\")"
     ],
     "additionalDirectories": [
       "e:\\jinchanchan\\data"

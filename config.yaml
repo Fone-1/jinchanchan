@@ -1,6 +1,6 @@
 adb:
-  path: ""
   active_profile: MuMu 本机
+  path: ''
   profiles:
   - device_serial: emulator-5556
     emulator: mumu
@@ -21,11 +21,15 @@ automation:
 emulator:
   height: 720
   width: 1280
+recognizer:
+  debug: true
 screenshot:
   interval_ms: 1000
   region: null
 season:
-  current: s18_mode17
+  current: s18_mode4
+debug:
+  enabled: true
 ui:
   scale: 1.0
   theme: dark

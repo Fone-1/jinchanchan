@@ -297,6 +297,182 @@ adb:
 | 模拟器预设 | MuMu/雷电/夜神 | 全覆盖/无预设 | 覆盖主流，减少手动输入 |
 | 连接测试 | 详细诊断信息 | 简单状态/无测试 | 便于排查连接问题 |
 
+## 调试面板设计
+
+### 概述
+
+为开发者自用构建一个调试面板，集成到主应用侧边栏，支持按模块独立调试。核心能力：事件流监控、插件状态检查、事件模拟/注入。
+
+### 架构
+
+```
+core/
+  debug_event_bus.py    # DebugEventBus，继承 EventBus，拦截所有事件
+  debug_manager.py      # DebugManager，聚合调试数据，供 UI 消费
+
+ui/pages/
+  debug_page.py         # 调试面板 UI
+
+plugins/<name>/plugin.py  # 各插件新增可选的 get_debug_info() 方法
+```
+
+**核心流程：**
+1. `main.py` 根据 `config.yaml` 中 `debug.enabled` 决定使用 `DebugEventBus` 还是原版 `EventBus`
+2. `DebugEventBus` 在 `emit()` 时自动记录事件数据到环形缓冲区（500条上限）
+3. `DebugEventBus` 在 `on()` 时记录事件订阅关系
+4. `DebugManager` 聚合事件日志、插件状态、订阅关系，提供查询接口
+5. `DebugPage` UI 从 `DebugManager` 读取数据，轮询间隔 200ms
+
+### DebugEventBus
+
+```python
+class DebugEventBus(EventBus):
+    def __init__(self, max_events=500):
+        super().__init__()
+        self._event_log = deque(maxlen=max_events)  # 环形缓冲区
+        self._subscription_map = {}  # {event: [handler_names]}
+        self._enabled = True
+
+    def on(self, event, handler):
+        # 记录订阅关系后调用 super().on()
+        pass
+
+    def emit(self, event, data=None):
+        if self._enabled:
+            self._record_event(event, data)
+        super().emit(event, data)
+
+    # 查询接口
+    def get_event_log(self, event_filter=None, limit=100) -> list
+    def get_subscription_map(self) -> dict
+    def clear_log(self)
+    def set_enabled(self, enabled: bool)
+```
+
+**事件记录格式：**
+- `timestamp` — 精确到毫秒
+- `event_name` — 事件名称
+- `data_summary` — 数据摘要（截断 200 字符，避免大对象如图片数据）
+- `handler_count` — 处理该事件的 handler 数量
+- `source` — 调用 emit 的模块名（从调用栈提取）
+
+**性能保障：**
+- 环形缓冲区自动丢弃旧数据，内存可控
+- data_summary 只取 repr() 前 200 字符，不深拷贝原始数据
+- UI 轮询 200ms 读取，非实时推送，不耦合调试逻辑和 UI 线程
+- deque 操作需加锁（emit 可能从心跳线程、截图线程等多线程调用）
+
+### 插件状态暴露
+
+BasePlugin 新增可选方法：
+
+```python
+def get_debug_info(self) -> dict:
+    """返回插件内部运行时状态，子类可覆写。默认返回空字典。"""
+    return {}
+```
+
+各插件预期暴露内容：
+
+| 插件 | get_debug_info 内容 |
+|---|---|
+| `adb_connector` | 当前设备信息、心跳状态、最后连接时间、重连次数 |
+| `screenshot` | 最后截图时间、截图尺寸、黑帧计数、当前间隔 |
+| `recognizer` | 最后识别结果缓存（gold/level/shop）、debug 图片路径 |
+| `decision_engine` | 当前目标阵容、决策队列、最后决策详情 |
+| `action_executor` | 待执行动作队列、最后执行结果、执行耗时 |
+
+### DebugPage UI 布局
+
+```
+┌─────────────────────────────────────────────────────┐
+│ [调试面板]  [开启监控 ☐]  [清空日志]  [刷新]         │
+├──────────┬──────────────────────┬───────────────────┤
+│ 插件列表  │   事件流 / 状态 选项卡  │   详情/模拟面板    │
+│          │                      │                   │
+│ ▸ adb    │ ┌──────────────────┐ │ ┌───────────────┐ │
+│   screen │ │ 事件流  │ 状态   │ │ │ 事件详情       │ │
+│   recog  │ ├──────────────────┤ │ │               │ │
+│   decisi │ │ 10:23:01.123     │ │ │ event: xxx    │ │
+│   action │ │ screenshot_ready │ │ │ data: {...}   │ │
+│          │ │ [screenshot]     │ │ │ handlers: 2   │ │
+│          │ │                  │ │ └───────────────┘ │
+│          │ │ 10:23:01.150     │ │                   │
+│          │ │ game_state_update│ │ ┌───────────────┐ │
+│          │ │ [recognizer]     │ │ │ 事件模拟       │ │
+│          │ │                  │ │ │ 事件类型: [▼]  │ │
+│          │ │ 10:23:01.200     │ │ │ 数据: [JSON ] │ │
+│          │ │ action_required  │ │ │ [发送事件]    │ │
+│          │ │ [decision_eng]   │ │ └───────────────┘ │
+│          │ └──────────────────┘ │                   │
+└──────────┴──────────────────────┴───────────────────┘
+```
+
+**左侧 — 插件列表：**
+- 列出所有已注册插件，显示运行状态指示灯（绿/红）
+- 点击插件名 → 右侧切换到该插件状态视图
+
+**中间 — 选项卡区域：**
+- **事件流**：表格视图（时间 | 事件名 | 来源 | 数据摘要 | handler数），新事件自动追加，可暂停滚动，按事件名过滤
+- **插件状态**（点击左侧插件后显示）：运行状态、事件订阅列表、配置参数、内部状态
+
+**右侧 — 详情/模拟面板：**
+- **事件详情**（点击事件流条目）：完整数据（格式化 JSON）、handler 列表
+- **事件模拟**（固定底部）：事件类型下拉框、JSON 数据输入、发送按钮
+
+### 集成方式
+
+```python
+# main.py
+if config.get("debug", {}).get("enabled", False):
+    event_bus = DebugEventBus()
+    debug_manager = DebugManager(event_bus)
+else:
+    event_bus = EventBus()
+    debug_manager = None
+
+# 创建 UI 时传入 debug_manager
+app = App(plugin_mgr, event_bus, config_mgr, debug_manager)
+```
+
+```yaml
+# config.yaml 新增
+debug:
+  enabled: false  # 默认关闭
+```
+
+侧边栏仅当 `debug_manager` 不为 None 时显示"调试"按钮。
+
+### 决策日志
+
+| # | 决策 | 备选方案 | 理由 |
+|---|---|---|---|
+| 1 | DebugEventBus 继承 EventBus | 包装/代理模式 | 继承更简单，super() 直接复用原逻辑 |
+| 2 | 环形缓冲区 500 条 | 无限增长 / 文件日志 | 500 条足够回溯近期问题，内存可控 |
+| 3 | UI 轮询 200ms | EventBus 推送更新 | 推送会耦合调试逻辑和 UI 线程 |
+| 4 | data_summary 截断 200 字符 | 完整记录 | screenshot_ready 含图片数据，必须截断 |
+| 5 | 调试开关在 config.yaml | 命令行参数 | 与现有配置体系一致 |
+| 6 | get_debug_info 可选实现 | 强制实现 | 避免给空插件增加负担 |
+
+### 已知风险
+
+1. **高频事件性能** — `screenshot_ready` 每秒触发一次（含图片数据），记录时必须截断摘要
+2. **线程安全** — EventBus emit 可能从多线程调用，`_event_log` 的 deque 操作需加锁
+3. **事件名动态性** — 部分事件运行时才出现，事件模拟的下拉列表需动态更新
+
+### 代码变更清单
+
+| 文件 | 变更 |
+|------|------|
+| `config.yaml` | 新增 `debug.enabled` 字段 |
+| `core/debug_event_bus.py` | 新建，DebugEventBus 类 |
+| `core/debug_manager.py` | 新建，DebugManager 类 |
+| `core/base_plugin.py` | 新增 `get_debug_info()` 可选方法 |
+| `ui/pages/debug_page.py` | 新建，调试面板 UI |
+| `ui/app.py` | 侧边栏新增调试按钮，传入 debug_manager |
+| `main.py` | 根据配置选择 EventBus 类型，创建 debug_manager |
+| 各插件 plugin.py | 可选：覆写 `get_debug_info()` |
+
 ## 非功能性假设
 
 - 运行环境：Windows 10/11

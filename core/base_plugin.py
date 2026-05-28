@@ -36,3 +36,8 @@ class BasePlugin(ABC):
     def get_config_schema() -> dict[str, Any]:
         """返回插件配置项定义，用于 UI 动态生成配置表单"""
         return {}
+
+    def get_debug_info(self) -> dict[str, Any]:
+        """返回插件内部运行时状态，供调试面板展示。
+        子类可覆写此方法暴露自定义调试信息。"""
+        return {}

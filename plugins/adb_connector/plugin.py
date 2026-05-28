@@ -164,6 +164,14 @@ class AdbConnectorPlugin(BasePlugin):
     def is_connected(self) -> bool:
         return self._device is not None
 
+    def get_debug_info(self) -> dict[str, Any]:
+        return {
+            "connected": self.is_connected,
+            "device_serial": self._device.serial if self._device else None,
+            "config_host": self.config.get("host", "127.0.0.1"),
+            "config_port": self.config.get("port", 7555),
+        }
+
     @staticmethod
     def get_config_schema() -> dict[str, Any]:
         return {
