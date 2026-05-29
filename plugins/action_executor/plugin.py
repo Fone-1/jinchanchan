@@ -36,6 +36,7 @@ class ActionExecutorPlugin(BasePlugin):
 
     def __init__(self, event_bus, config: dict[str, Any]):
         super().__init__(event_bus, config)
+        self._adb = None
         self._device = None
         self._queue: Queue = Queue()
         self._worker_thread: threading.Thread | None = None
@@ -63,9 +64,11 @@ class ActionExecutorPlugin(BasePlugin):
             self._worker_thread.join(timeout=3)
 
     def _on_device_connected(self, data: dict) -> None:
+        self._adb = data.get("connector")
         self._device = data.get("device")
 
     def _on_device_disconnected(self, _data=None) -> None:
+        self._adb = None
         self._device = None
 
     def _on_action(self, action: dict[str, Any]) -> None:
@@ -122,20 +125,28 @@ class ActionExecutorPlugin(BasePlugin):
         # 实际坐标按模拟器分辨率缩放
         # adb input tap 使用的是模拟器内部分辨率，通常不需要缩放
         if long_press > 0:
-            self._device.shell(f"input swipe {x} {y} {x} {y} {long_press}")
+            self._shell(f"input swipe {x} {y} {x} {y} {long_press}")
         else:
-            self._device.shell(f"input tap {x} {y}")
+            self._shell(f"input tap {x} {y}")
         logger.debug(f"点击: ({x}, {y})")
 
     def _drag(self, from_pos: tuple, to_pos: tuple, duration: int = 300) -> None:
         x1, y1 = from_pos
         x2, y2 = to_pos
-        self._device.shell(f"input swipe {x1} {y1} {x2} {y2} {duration}")
+        self._shell(f"input swipe {x1} {y1} {x2} {y2} {duration}")
         logger.debug(f"拖拽: ({x1},{y1}) -> ({x2},{y2})")
+
+    def _shell(self, command: str) -> str:
+        if self._adb is not None:
+            return self._adb.shell(command)
+        if self._adb is None and self._device is None:
+            raise RuntimeError("ADB 设备未连接")
+        return self._device.shell(command)
 
     def get_debug_info(self) -> dict[str, Any]:
         return {
             "has_device": self._device is not None,
+            "has_connector": self._adb is not None,
             "queue_size": self._queue.qsize(),
             "worker_alive": self._worker_thread.is_alive() if self._worker_thread else False,
         }

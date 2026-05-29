@@ -1,15 +1,17 @@
-"""ADB 连接插件 — 检测模拟器、建立连接、心跳保活、连接测试"""
+"""ADB connection plugin: connect, keep alive, reconnect, and diagnose devices."""
 
 import logging
 import threading
 import time
-from typing import Any
+from typing import Any, Callable, TypeVar
 
 from adbutils import AdbClient, AdbDevice
 
 from core.base_plugin import BasePlugin
 
 logger = logging.getLogger(__name__)
+
+T = TypeVar("T")
 
 EMULATOR_PRESETS = {
     "mumu": {"label": "MuMu (默认7555)", "device_port": 7555},
@@ -22,12 +24,28 @@ EMULATOR_PRESETS = {
 class AdbConnectorPlugin(BasePlugin):
     name = "adb_connector"
 
+    HEARTBEAT_INTERVAL_SECONDS = 5.0
+    CONNECT_TIMEOUT_SECONDS = 5.0
+    CONNECT_RETRY_COUNT = 3
+
     def __init__(self, event_bus, config: dict[str, Any]):
         super().__init__(event_bus, config)
         self._client: AdbClient | None = None
         self._device: AdbDevice | None = None
+        self._device_serial: str | None = None
+
+        self._connection_lock = threading.RLock()
+        self._thread_lock = threading.Lock()
+        self._connect_thread: threading.Thread | None = None
         self._heartbeat_thread: threading.Thread | None = None
         self._stop_heartbeat = threading.Event()
+
+        self._last_connected_at: float | None = None
+        self._last_heartbeat_at: float | None = None
+        self._last_error = ""
+        self._last_connect_result = ""
+        self._heartbeat_ok = False
+        self._reconnect_count = 0
 
         self.event_bus.on("request_adb_reconnect", self._on_request_reconnect)
 
@@ -35,71 +53,150 @@ class AdbConnectorPlugin(BasePlugin):
         self._init_client()
 
     def _init_client(self) -> None:
-        host = self.config.get("host", "127.0.0.1")
-        self._client = AdbClient(host=host, port=5037)
-        logger.info(f"ADB 客户端初始化: {host}:5037")
+        server_host, server_port = self._get_adb_server_endpoint(self.config)
+        self._client = AdbClient(
+            host=server_host,
+            port=server_port,
+            socket_timeout=self.CONNECT_TIMEOUT_SECONDS,
+        )
+        logger.info("ADB client initialized: %s:%s", server_host, server_port)
 
     def start(self) -> None:
+        if self._running:
+            return
         self._running = True
-        # 首次连接放到后台线程，避免阻塞 UI 启动
-        threading.Thread(target=self._connect, daemon=True).start()
+        self._stop_heartbeat.clear()
+        self._schedule_connect("startup")
         self._start_heartbeat()
 
     def stop(self) -> None:
         self._running = False
         self._stop_heartbeat.set()
-        if self._heartbeat_thread and self._heartbeat_thread.is_alive():
+
+        if self._connect_thread and self._connect_thread.is_alive() and self._connect_thread is not threading.current_thread():
+            self._connect_thread.join(timeout=3)
+        if self._heartbeat_thread and self._heartbeat_thread.is_alive() and self._heartbeat_thread is not threading.current_thread():
             self._heartbeat_thread.join(timeout=3)
-        self._device = None
+
+        self._mark_disconnected("plugin stopped", emit=True)
 
     def reconnect(self, new_config: dict[str, Any]) -> None:
-        """热重连：断开当前连接，用新配置重新连接"""
-        logger.info(f"热重连: {new_config}")
-        self.stop()
-        # 尝试关闭旧 ADB server，确保新路径生效
-        try:
-            if self._client:
-                self._client.server_kill()
-                logger.info("已关闭旧 ADB server")
-        except Exception:
-            pass
-        self.config = new_config
-        self._init_client()
-        self._stop_heartbeat.clear()
-        self.start()
+        """Apply a new profile and reconnect without killing the global ADB server."""
+        logger.info("ADB reconnect requested: %s", new_config)
+        self.config = dict(new_config)
+        with self._connection_lock:
+            self._init_client()
+            self._reconnect_count += 1
+        self._mark_disconnected("config changed", emit=True)
+
+        if not self._running:
+            self.start()
+            return
+        self._schedule_connect("config changed")
 
     def _on_request_reconnect(self, _data=None) -> None:
         if not self._running:
             return
-        logger.warning("收到重新连接 ADB 的请求，正在断开当前连接并重新建立连接...")
-        self._device = None
-        self.event_bus.emit("device_disconnected")
-        # 异步执行连接，避免卡住
-        threading.Thread(target=self._connect, daemon=True).start()
+        logger.warning("ADB reconnect requested by another plugin")
+        with self._connection_lock:
+            self._reconnect_count += 1
+        self._mark_disconnected("reconnect requested", emit=True)
+        self._schedule_connect("reconnect requested")
 
-    def _connect(self) -> None:
-        serial = self.config.get("device_serial")
-        if not serial:
-            # 从 host:port 构造设备序列号
-            host = self.config.get("host", "127.0.0.1")
-            port = self.config.get("port", 7555)
-            serial = f"{host}:{port}"
+    def _schedule_connect(self, reason: str) -> None:
+        if not self._running:
+            return
+
+        with self._thread_lock:
+            if self._connect_thread and self._connect_thread.is_alive():
+                logger.debug("ADB connect already running, skip duplicate request: %s", reason)
+                return
+            self._connect_thread = threading.Thread(
+                target=self._connect_worker,
+                args=(reason,),
+                daemon=True,
+                name="adb-connect",
+            )
+            self._connect_thread.start()
+
+    def _connect_worker(self, reason: str) -> None:
+        for attempt in range(1, self.CONNECT_RETRY_COUNT + 1):
+            if self._stop_heartbeat.is_set() or not self._running:
+                return
+            if self._connect_once(reason, attempt):
+                return
+            if attempt < self.CONNECT_RETRY_COUNT:
+                delay = min(1.5 * attempt, 5.0)
+                self._stop_heartbeat.wait(timeout=delay)
+
+    def _connect_once(self, reason: str, attempt: int) -> bool:
+        cfg = dict(self.config)
+        serial = self._get_target_serial(cfg)
+        connect_result = ""
+
         try:
-            self._device = self._client.device(serial)
-            info = self._device.shell("getprop ro.product.model").strip()
-            logger.info(f"已连接设备: {self._device.serial} ({info})")
-            self.event_bus.emit("device_connected", {"device": self._device})
-        except Exception:
-            logger.exception("ADB 连接失败")
-            self._device = None
-            self.event_bus.emit("device_disconnected")
+            with self._connection_lock:
+                if self._client is None:
+                    self._init_client()
+                if self._client is None:
+                    raise RuntimeError("ADB client is not initialized")
+
+                server_version = self._client.server_version()
+                if self._is_tcp_serial(serial):
+                    connect_result = self._client.connect(serial, timeout=self.CONNECT_TIMEOUT_SECONDS)
+
+                device = self._client.device(serial)
+                model = device.shell("getprop ro.product.model").strip()
+                wm_size = device.shell("wm size").strip()
+                if self._stop_heartbeat.is_set() or not self._running:
+                    return False
+
+                self._device = device
+                self._device_serial = device.serial
+                self._last_connected_at = time.time()
+                self._last_heartbeat_at = self._last_connected_at
+                self._last_error = ""
+                self._last_connect_result = connect_result
+                self._heartbeat_ok = True
+
+                payload = {
+                    "device": device,
+                    "connector": self,
+                    "serial": device.serial,
+                    "model": model,
+                    "resolution": self._parse_wm_size(wm_size),
+                    "adb_version": str(server_version),
+                    "connect_result": connect_result,
+                }
+
+            logger.info(
+                "ADB connected: serial=%s model=%s reason=%s attempt=%s result=%s",
+                payload["serial"],
+                model,
+                reason,
+                attempt,
+                connect_result or "transport ready",
+            )
+            self.event_bus.emit("device_connected", payload)
+            return True
+        except Exception as exc:
+            self._last_error = str(exc)
+            logger.warning(
+                "ADB connect failed: serial=%s reason=%s attempt=%s/%s error=%s",
+                serial,
+                reason,
+                attempt,
+                self.CONNECT_RETRY_COUNT,
+                exc,
+            )
+            self._mark_disconnected(str(exc), emit=True)
+            return False
 
     def test_connection(self, test_config: dict[str, Any] | None = None) -> dict[str, Any]:
-        """测试连接，返回诊断信息"""
+        """Test a profile and return diagnostic information."""
         cfg = test_config or self.config
-        host = cfg.get("host", "127.0.0.1")
-        port = cfg.get("port", 7555)
-        serial = cfg.get("device_serial") or f"{host}:{port}"
+        server_host, server_port = self._get_adb_server_endpoint(cfg)
+        serial = self._get_target_serial(cfg)
 
         result = {
             "success": False,
@@ -107,70 +204,163 @@ class AdbConnectorPlugin(BasePlugin):
             "resolution": "",
             "adb_version": "",
             "latency_ms": 0,
-            "serial": "",
+            "serial": serial,
             "error": "",
+            "connect_result": "",
+            "devices": [],
+            "adb_server": f"{server_host}:{server_port}",
         }
 
         try:
-            client = AdbClient(host=host, port=5037)
+            client = AdbClient(
+                host=server_host,
+                port=server_port,
+                socket_timeout=self.CONNECT_TIMEOUT_SECONDS,
+            )
 
-            # 测延迟
             t0 = time.perf_counter()
             server_version = client.server_version()
             result["latency_ms"] = int((time.perf_counter() - t0) * 1000)
             result["adb_version"] = str(server_version)
 
-            device = client.device(serial)
+            if self._is_tcp_serial(serial):
+                result["connect_result"] = client.connect(serial, timeout=self.CONNECT_TIMEOUT_SECONDS)
 
+            result["devices"] = [device.serial for device in client.device_list()]
+            device = client.device(serial)
             result["serial"] = device.serial
             result["model"] = device.shell("getprop ro.product.model").strip()
-
-            # 获取分辨率
-            wm_output = device.shell("wm size").strip()
-            if ":" in wm_output:
-                result["resolution"] = wm_output.split(":")[-1].strip()
-
+            result["resolution"] = self._parse_wm_size(device.shell("wm size").strip())
             result["success"] = True
-        except Exception as e:
-            result["error"] = str(e)
+        except Exception as exc:
+            result["error"] = str(exc)
 
         return result
 
     def _start_heartbeat(self) -> None:
-        def _heartbeat_loop():
-            while not self._stop_heartbeat.is_set():
-                self._stop_heartbeat.wait(timeout=5)
-                if self._stop_heartbeat.is_set():
-                    break
-                if self._device is None:
-                    self._connect()
-                    continue
-                try:
-                    self._device.shell("echo ok")
-                except Exception:
-                    logger.warning("ADB 心跳失败，尝试重连")
-                    self._device = None
-                    self.event_bus.emit("device_disconnected")
-                    self._connect()
+        with self._thread_lock:
+            if self._heartbeat_thread and self._heartbeat_thread.is_alive():
+                return
+            self._heartbeat_thread = threading.Thread(
+                target=self._heartbeat_loop,
+                daemon=True,
+                name="adb-heartbeat",
+            )
+            self._heartbeat_thread.start()
 
-        self._heartbeat_thread = threading.Thread(target=_heartbeat_loop, daemon=True)
-        self._heartbeat_thread.start()
+    def _heartbeat_loop(self) -> None:
+        while not self._stop_heartbeat.wait(timeout=self.HEARTBEAT_INTERVAL_SECONDS):
+            if not self._running:
+                return
+
+            if not self.is_connected:
+                self._schedule_connect("heartbeat")
+                continue
+
+            try:
+                self.shell("echo ok")
+                with self._connection_lock:
+                    self._last_heartbeat_at = time.time()
+                    self._heartbeat_ok = True
+            except Exception as exc:
+                logger.warning("ADB heartbeat failed: %s", exc)
+
+    def shell(self, command: str) -> str:
+        """Run a shell command through the current device with serialized ADB access."""
+        return self._run_on_device(lambda device: device.shell(command))
+
+    def screenshot(self):
+        """Capture a screenshot through the current device with serialized ADB access."""
+        return self._run_on_device(lambda device: device.screenshot())
+
+    def _run_on_device(self, operation: Callable[[AdbDevice], T]) -> T:
+        error: Exception | None = None
+        with self._connection_lock:
+            device = self._device
+            if device is None:
+                raise RuntimeError("ADB device is not connected")
+            try:
+                return operation(device)
+            except Exception as exc:
+                error = exc
+
+        if error is not None:
+            self._handle_device_error(error)
+            raise error
+
+        raise RuntimeError("ADB operation failed without an exception")
+
+    def _handle_device_error(self, error: Exception) -> None:
+        logger.warning("ADB device operation failed, scheduling reconnect: %s", error)
+        with self._connection_lock:
+            self._reconnect_count += 1
+        self._mark_disconnected(str(error), emit=True)
+        self._schedule_connect("device operation failed")
+
+    def _mark_disconnected(self, error: str = "", emit: bool = False) -> None:
+        with self._connection_lock:
+            was_connected = self._device is not None
+            self._device = None
+            self._device_serial = None
+            self._heartbeat_ok = False
+            if error:
+                self._last_error = error
+
+        if emit and was_connected:
+            self.event_bus.emit("device_disconnected", {"error": error})
+
+    @staticmethod
+    def _get_adb_server_endpoint(config: dict[str, Any]) -> tuple[str, int]:
+        host = config.get("adb_server_host") or config.get("server_host") or "127.0.0.1"
+        port = config.get("adb_server_port") or config.get("server_port") or 5037
+        return str(host).strip(), int(port)
+
+    @staticmethod
+    def _get_target_serial(config: dict[str, Any]) -> str:
+        serial = config.get("device_serial")
+        if serial:
+            return str(serial).strip()
+
+        host = str(config.get("host", "127.0.0.1")).strip() or "127.0.0.1"
+        port = int(config.get("port", 7555))
+        return f"{host}:{port}"
+
+    @staticmethod
+    def _is_tcp_serial(serial: str) -> bool:
+        return ":" in serial and not serial.startswith("emulator-")
+
+    @staticmethod
+    def _parse_wm_size(wm_output: str) -> str:
+        if ":" in wm_output:
+            return wm_output.split(":", 1)[1].strip()
+        return wm_output.strip()
 
     @property
     def device(self) -> AdbDevice | None:
-        return self._device
+        with self._connection_lock:
+            return self._device
 
     @property
     def is_connected(self) -> bool:
-        return self._device is not None
+        with self._connection_lock:
+            return self._device is not None
 
     def get_debug_info(self) -> dict[str, Any]:
-        return {
-            "connected": self.is_connected,
-            "device_serial": self._device.serial if self._device else None,
-            "config_host": self.config.get("host", "127.0.0.1"),
-            "config_port": self.config.get("port", 7555),
-        }
+        with self._connection_lock:
+            return {
+                "connected": self._device is not None,
+                "device_serial": self._device_serial,
+                "target_serial": self._get_target_serial(self.config),
+                "adb_server": ":".join(map(str, self._get_adb_server_endpoint(self.config))),
+                "heartbeat_ok": self._heartbeat_ok,
+                "last_connected_at": self._last_connected_at,
+                "last_heartbeat_at": self._last_heartbeat_at,
+                "last_error": self._last_error,
+                "last_connect_result": self._last_connect_result,
+                "reconnect_count": self._reconnect_count,
+                "connect_thread_alive": self._connect_thread.is_alive() if self._connect_thread else False,
+                "heartbeat_thread_alive": self._heartbeat_thread.is_alive() if self._heartbeat_thread else False,
+            }
 
     @staticmethod
     def get_config_schema() -> dict[str, Any]:

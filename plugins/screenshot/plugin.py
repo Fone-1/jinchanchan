@@ -17,6 +17,7 @@ class ScreenshotPlugin(BasePlugin):
 
     def __init__(self, event_bus, config: dict[str, Any]):
         super().__init__(event_bus, config)
+        self._adb = None
         self._device = None
         self._thread: threading.Thread | None = None
         self._stop_event = threading.Event()
@@ -32,27 +33,29 @@ class ScreenshotPlugin(BasePlugin):
 
     def start(self) -> None:
         self._running = True
-        if self._device:
-            self._start_capture()
+        self._start_capture()
 
     def stop(self) -> None:
         self._running = False
         self._stop_event.set()
         if self._thread and self._thread.is_alive():
             self._thread.join(timeout=3)
+        self._adb = None
+        self._device = None
 
     def _on_device_connected(self, data: dict) -> None:
+        self._adb = data.get("connector")
         self._device = data.get("device")
         self._consecutive_black_frames = 0
-        if self._running:
-            self._start_capture()
 
     def _on_device_disconnected(self, _data=None) -> None:
+        self._adb = None
         self._device = None
         self._consecutive_black_frames = 0
-        self._stop_event.set()
 
     def _start_capture(self) -> None:
+        if self._thread and self._thread.is_alive():
+            return
         self._stop_event.clear()
 
         def _capture_loop():
@@ -80,9 +83,12 @@ class ScreenshotPlugin(BasePlugin):
         logger.info(f"截图采集已启动，间隔 {self._interval}s")
 
     def _take_screenshot(self) -> np.ndarray | None:
-        if self._device is None:
+        if self._adb is not None:
+            raw = self._adb.screenshot()
+        elif self._device is not None:
+            raw = self._device.screenshot()
+        else:
             return None
-        raw = self._device.screenshot()
         img = cv2.cvtColor(np.array(raw), cv2.COLOR_RGB2BGR)
         if self._region:
             x, y, w, h = self._region
@@ -95,6 +101,7 @@ class ScreenshotPlugin(BasePlugin):
             "region": self._region,
             "consecutive_black_frames": self._consecutive_black_frames,
             "has_device": self._device is not None,
+            "has_connector": self._adb is not None,
             "capture_thread_alive": self._thread.is_alive() if self._thread else False,
         }
 
