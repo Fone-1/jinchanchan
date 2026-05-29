@@ -1,16 +1,40 @@
-"""实时状态页 — 显示连接状态、游戏状态、截图预览"""
+"""实时状态页：首页监控、棋盘状态、商店与半自动确认操作。"""
 
+from typing import Any
+
+import cv2
 import customtkinter as ctk
 from PIL import Image
-import cv2
 
 from core.event_bus import EventBus
 
 
 class StatusPage(ctk.CTkFrame):
+    """首页采用“战术指挥台”布局：状态优先，监控画面可隐藏释放空间。"""
+
+    BG = "#080b10"
+    PANEL = "#111827"
+    PANEL_ALT = "#0f172a"
+    CELL = "#1e293b"
+    MUTED = "#94a3b8"
+    TEXT = "#e5e7eb"
+    GREEN = "#10b981"
+    BLUE = "#38bdf8"
+    AMBER = "#eab308"
+    RED = "#ef4444"
+
     def __init__(self, parent, event_bus: EventBus):
-        super().__init__(parent)
+        super().__init__(parent, fg_color=self.BG)
         self.event_bus = event_bus
+        self._bench_cells = []
+        self._board_cells = [[None] * 7 for _ in range(4)]
+        self._shop_labels = []
+        self._monitor_visible = True
+        self._layout_mode = ""
+        self._last_img = None
+        self._preview_image = None
+        self._last_lbl_w = 0
+        self._last_lbl_h = 0
         self._build()
         self._bind_events()
 
@@ -18,46 +42,256 @@ class StatusPage(ctk.CTkFrame):
         self.grid_columnconfigure(0, weight=1)
         self.grid_rowconfigure(1, weight=1)
 
-        # 顶部状态栏
-        status_bar = ctk.CTkFrame(self, height=50)
-        status_bar.grid(row=0, column=0, sticky="ew", pady=(0, 10))
-        status_bar.grid_propagate(False)
+        self._build_status_bar()
+        self._build_main_area()
+        self._build_action_bar()
 
-        self._conn_label = ctk.CTkLabel(status_bar, text="● 未连接", text_color="red", font=("", 14))
-        self._conn_label.pack(side="left", padx=15, pady=10)
+    def _build_status_bar(self):
+        self._status_bar = ctk.CTkFrame(self, fg_color=self.PANEL, corner_radius=8)
+        self._status_bar.grid(row=0, column=0, sticky="ew", padx=2, pady=(0, 10))
+        self._status_bar.grid_columnconfigure(5, weight=1)
 
-        self._gold_label = ctk.CTkLabel(status_bar, text="金币: --")
-        self._gold_label.pack(side="left", padx=15)
+        title_block = ctk.CTkFrame(self._status_bar, fg_color="transparent")
+        title_block.grid(row=0, column=0, sticky="w", padx=(14, 18), pady=10)
+        ctk.CTkLabel(
+            title_block,
+            text="实时指挥台",
+            font=("Microsoft YaHei UI", 18, "bold"),
+            text_color=self.TEXT,
+        ).pack(anchor="w")
+        ctk.CTkLabel(
+            title_block,
+            text="ADB / 识别 / 决策",
+            font=("Consolas", 10),
+            text_color=self.MUTED,
+        ).pack(anchor="w", pady=(1, 0))
 
-        self._level_label = ctk.CTkLabel(status_bar, text="等级: --")
-        self._level_label.pack(side="left", padx=15)
+        self._conn_label = self._status_chip(self._status_bar, "● 未连接", self.RED, 1)
+        self._gold_label = self._status_chip(self._status_bar, "金币: --", self.AMBER, 2)
+        self._level_label = self._status_chip(self._status_bar, "等级: --", self.BLUE, 3)
+        self._stage_label = self._status_chip(self._status_bar, "阶段: --", self.MUTED, 4)
 
-        self._stage_label = ctk.CTkLabel(status_bar, text="阶段: --")
-        self._stage_label.pack(side="left", padx=15)
+        self._monitor_switch = ctk.CTkSwitch(
+            self._status_bar,
+            text="显示实时监控",
+            font=("Microsoft YaHei UI", 12, "bold"),
+            progress_color=self.GREEN,
+            button_color=self.TEXT,
+            command=self._toggle_monitor,
+        )
+        self._monitor_switch.grid(row=0, column=6, sticky="e", padx=(12, 14), pady=10)
+        self._monitor_switch.select()
 
-        # 截图预览区
-        self._preview_label = ctk.CTkLabel(self, text="等待截图...", font=("", 16))
-        self._preview_label.grid(row=1, column=0, sticky="nsew")
+    def _status_chip(self, parent, text: str, color: str, column: int) -> ctk.CTkLabel:
+        chip = ctk.CTkLabel(
+            parent,
+            text=text,
+            font=("Microsoft YaHei UI", 12, "bold"),
+            text_color=color,
+            fg_color=self.PANEL_ALT,
+            corner_radius=6,
+            height=34,
+        )
+        chip.grid(row=0, column=column, sticky="w", padx=4, pady=10)
+        return chip
 
-        # 底部操作栏
-        action_bar = ctk.CTkFrame(self, height=80)
-        action_bar.grid(row=2, column=0, sticky="ew", pady=(10, 0))
+    def _build_main_area(self):
+        self._main_content = ctk.CTkFrame(self, fg_color="transparent")
+        self._main_content.grid(row=1, column=0, sticky="nsew")
+        self._main_content.grid_columnconfigure(0, weight=1)
+        self._main_content.grid_columnconfigure(1, weight=1)
+        self._main_content.grid_rowconfigure(0, weight=1)
+
+        self._build_monitor_pane()
+        self._build_tactics_pane()
+        self._main_content.bind("<Configure>", self._on_main_resize)
+        self.after(50, self._apply_responsive_layout)
+
+    def _build_monitor_pane(self):
+        self._monitor_pane = ctk.CTkFrame(self._main_content, fg_color=self.PANEL, corner_radius=8)
+        self._monitor_pane.grid_columnconfigure(0, weight=1)
+        self._monitor_pane.grid_rowconfigure(1, weight=1)
+
+        header = ctk.CTkFrame(self._monitor_pane, fg_color="transparent")
+        header.grid(row=0, column=0, sticky="ew", padx=14, pady=(12, 8))
+        header.grid_columnconfigure(0, weight=1)
+
+        ctk.CTkLabel(
+            header,
+            text="实时监控画面",
+            font=("Microsoft YaHei UI", 15, "bold"),
+            text_color=self.GREEN,
+        ).grid(row=0, column=0, sticky="w")
+        self._monitor_hint = ctk.CTkLabel(
+            header,
+            text="自适应缩放",
+            font=("Consolas", 10),
+            text_color=self.MUTED,
+        )
+        self._monitor_hint.grid(row=0, column=1, sticky="e")
+
+        self._preview_label = ctk.CTkLabel(
+            self._monitor_pane,
+            text="等待连接并捕获屏幕中...",
+            font=("Microsoft YaHei UI", 14),
+            text_color=self.MUTED,
+            fg_color="#05070b",
+            corner_radius=6,
+        )
+        self._preview_label.grid(row=1, column=0, sticky="nsew", padx=12, pady=(0, 12))
+        self._preview_label.bind("<Configure>", self._on_label_resize)
+
+    def _build_tactics_pane(self):
+        self._tactics_pane = ctk.CTkFrame(self._main_content, fg_color=self.PANEL, corner_radius=8)
+        self._tactics_pane.grid_columnconfigure(0, weight=1)
+        self._tactics_pane.grid_rowconfigure(1, weight=1)
+
+        header = ctk.CTkFrame(self._tactics_pane, fg_color="transparent")
+        header.grid(row=0, column=0, sticky="ew", padx=14, pady=(12, 4))
+        header.grid_columnconfigure(0, weight=1)
+
+        ctk.CTkLabel(
+            header,
+            text="棋局态势",
+            font=("Microsoft YaHei UI", 15, "bold"),
+            text_color=self.BLUE,
+        ).grid(row=0, column=0, sticky="w")
+        self._layout_label = ctk.CTkLabel(header, text="双栏", font=("Consolas", 10), text_color=self.MUTED)
+        self._layout_label.grid(row=0, column=1, sticky="e")
+
+        body = ctk.CTkScrollableFrame(self._tactics_pane, fg_color="transparent", corner_radius=0)
+        body.grid(row=1, column=0, sticky="nsew", padx=8, pady=(0, 8))
+        body.grid_columnconfigure(0, weight=1)
+
+        self._build_board(body)
+        self._build_bench(body)
+        self._build_shop(body)
+
+    def _build_board(self, parent):
+        board_frame = ctk.CTkFrame(parent, fg_color="transparent")
+        board_frame.grid(row=0, column=0, sticky="ew", padx=4, pady=(4, 12))
+
+        ctk.CTkLabel(
+            board_frame,
+            text="战斗盘面 4 x 7",
+            font=("Microsoft YaHei UI", 12, "bold"),
+            text_color=self.MUTED,
+        ).pack(anchor="w", padx=6, pady=(0, 6))
+
+        for r in range(4):
+            row_frame = ctk.CTkFrame(board_frame, fg_color="transparent")
+            row_frame.pack(anchor="w", padx=(26 if r % 2 else 6, 6), pady=2)
+            for c in range(7):
+                cell = ctk.CTkLabel(
+                    row_frame,
+                    text="+",
+                    font=("Microsoft YaHei UI", 10, "bold"),
+                    width=44,
+                    height=44,
+                    corner_radius=8,
+                    fg_color=self.CELL,
+                    text_color="#64748b",
+                )
+                cell.pack(side="left", padx=2)
+                self._board_cells[r][c] = cell
+
+    def _build_bench(self, parent):
+        bench_frame = ctk.CTkFrame(parent, fg_color="transparent")
+        bench_frame.grid(row=1, column=0, sticky="ew", padx=4, pady=(0, 12))
+
+        ctk.CTkLabel(
+            bench_frame,
+            text="备战席 1 x 9",
+            font=("Microsoft YaHei UI", 12, "bold"),
+            text_color=self.MUTED,
+        ).pack(anchor="w", padx=6, pady=(0, 6))
+
+        row_bench = ctk.CTkFrame(bench_frame, fg_color="transparent")
+        row_bench.pack(anchor="w", padx=6)
+        for _ in range(9):
+            cell = ctk.CTkLabel(
+                row_bench,
+                text="-",
+                font=("Microsoft YaHei UI", 10, "bold"),
+                width=36,
+                height=36,
+                corner_radius=7,
+                fg_color=self.CELL,
+                text_color="#64748b",
+            )
+            cell.pack(side="left", padx=2)
+            self._bench_cells.append(cell)
+
+    def _build_shop(self, parent):
+        shop_panel = ctk.CTkFrame(parent, fg_color="transparent")
+        shop_panel.grid(row=2, column=0, sticky="ew", padx=4, pady=(0, 8))
+        shop_panel.grid_columnconfigure(0, weight=1)
+
+        ctk.CTkLabel(
+            shop_panel,
+            text="实时商店",
+            font=("Microsoft YaHei UI", 12, "bold"),
+            text_color=self.MUTED,
+        ).grid(row=0, column=0, sticky="w", padx=6, pady=(0, 6))
+
+        row_shop = ctk.CTkFrame(shop_panel, fg_color="transparent")
+        row_shop.grid(row=1, column=0, sticky="ew", padx=6)
+        for i in range(5):
+            row_shop.grid_columnconfigure(i, weight=1, uniform="shop")
+            card = ctk.CTkLabel(
+                row_shop,
+                text="--",
+                font=("Microsoft YaHei UI", 11, "bold"),
+                height=42,
+                corner_radius=7,
+                fg_color=self.CELL,
+                text_color="#64748b",
+            )
+            card.grid(row=0, column=i, sticky="ew", padx=2)
+            self._shop_labels.append(card)
+
+    def _build_action_bar(self):
+        action_bar = ctk.CTkFrame(self, fg_color=self.PANEL, height=72, corner_radius=8)
+        action_bar.grid(row=2, column=0, sticky="ew", padx=2, pady=(10, 0))
+        action_bar.grid_columnconfigure(2, weight=1)
         action_bar.grid_propagate(False)
 
         self._confirm_btn = ctk.CTkButton(
-            action_bar, text="确认操作", width=120, state="disabled",
+            action_bar,
+            text="确认决策操作",
+            width=136,
+            height=38,
+            state="disabled",
+            font=("Microsoft YaHei UI", 12, "bold"),
+            fg_color=self.GREEN,
+            hover_color="#059669",
+            corner_radius=7,
             command=self._on_confirm,
         )
-        self._confirm_btn.pack(side="left", padx=15, pady=15)
+        self._confirm_btn.grid(row=0, column=0, sticky="w", padx=(14, 8), pady=16)
 
         self._reject_btn = ctk.CTkButton(
-            action_bar, text="跳过", width=80, state="disabled",
+            action_bar,
+            text="跳过动作",
+            width=96,
+            height=38,
+            state="disabled",
+            font=("Microsoft YaHei UI", 12, "bold"),
+            fg_color=self.RED,
+            hover_color="#dc2626",
+            corner_radius=7,
             command=self._on_reject,
         )
-        self._reject_btn.pack(side="left", padx=5, pady=15)
+        self._reject_btn.grid(row=0, column=1, sticky="w", padx=4, pady=16)
 
-        self._pending_label = ctk.CTkLabel(action_bar, text="")
-        self._pending_label.pack(side="left", padx=15)
+        self._pending_label = ctk.CTkLabel(
+            action_bar,
+            text="暂无待确认动作",
+            font=("Microsoft YaHei UI", 12, "bold"),
+            text_color=self.MUTED,
+            anchor="w",
+        )
+        self._pending_label.grid(row=0, column=2, sticky="ew", padx=(12, 14), pady=16)
 
     def _bind_events(self):
         self.event_bus.on("device_connected", self._on_connected)
@@ -66,46 +300,157 @@ class StatusPage(ctk.CTkFrame):
         self.event_bus.on("screenshot_ready", self._on_screenshot)
         self.event_bus.on("action_pending_confirm", self._on_pending)
 
-    def _on_connected(self, _data=None):
-        self._conn_label.configure(text="● 已连接", text_color="green")
+    def _on_main_resize(self, _event=None):
+        self._apply_responsive_layout()
+
+    def _apply_responsive_layout(self):
+        if not hasattr(self, "_main_content"):
+            return
+
+        width = self._main_content.winfo_width()
+        mode = "hidden" if not self._monitor_visible else ("stacked" if width < 980 else "split")
+        if mode == self._layout_mode:
+            return
+        self._layout_mode = mode
+
+        self._monitor_pane.grid_forget()
+        self._tactics_pane.grid_forget()
+        self._main_content.grid_columnconfigure(0, weight=1)
+        self._main_content.grid_columnconfigure(1, weight=1)
+
+        if mode == "hidden":
+            self._main_content.grid_rowconfigure(0, weight=1)
+            self._main_content.grid_rowconfigure(1, weight=0)
+            self._tactics_pane.grid(row=0, column=0, columnspan=2, sticky="nsew", padx=0, pady=0)
+            self._layout_label.configure(text="监控隐藏")
+        elif mode == "stacked":
+            self._main_content.grid_rowconfigure(0, weight=1)
+            self._main_content.grid_rowconfigure(1, weight=1)
+            self._monitor_pane.grid(row=0, column=0, columnspan=2, sticky="nsew", padx=0, pady=(0, 8))
+            self._tactics_pane.grid(row=1, column=0, columnspan=2, sticky="nsew", padx=0, pady=(8, 0))
+            self._layout_label.configure(text="窄屏堆叠")
+        else:
+            self._main_content.grid_rowconfigure(0, weight=1)
+            self._main_content.grid_rowconfigure(1, weight=0)
+            self._monitor_pane.grid(row=0, column=0, sticky="nsew", padx=(0, 5), pady=0)
+            self._tactics_pane.grid(row=0, column=1, sticky="nsew", padx=(5, 0), pady=0)
+            self._layout_label.configure(text="双栏")
+
+        self.after(50, self._update_preview)
+
+    def _toggle_monitor(self):
+        self._monitor_visible = bool(self._monitor_switch.get())
+        self._apply_responsive_layout()
+        if self._monitor_visible:
+            self._update_preview()
+
+    def _on_connected(self, data: dict | None = None):
+        model = data.get("model") if isinstance(data, dict) else None
+        label = f"● 已连接 {model}" if model else "● 已连接设备"
+        self._conn_label.configure(text=label, text_color=self.GREEN)
 
     def _on_disconnected(self, _data=None):
-        self._conn_label.configure(text="● 未连接", text_color="red")
+        self._conn_label.configure(text="● 未连接设备", text_color=self.RED)
+        self._gold_label.configure(text="金币: --")
+        self._level_label.configure(text="等级: --")
+        self._stage_label.configure(text="阶段: --")
 
-    def _on_game_state(self, state: dict):
+    def _on_game_state(self, state: dict[str, Any]):
         gold = state.get("gold", "--")
         level = state.get("level", "--")
+        stage = state.get("stage", "--")
         self._gold_label.configure(text=f"金币: {gold}")
         self._level_label.configure(text=f"等级: {level}")
+        self._stage_label.configure(text=f"阶段: {stage}")
+
+        shop_champions = state.get("shop_champions", [])
+        if shop_champions and len(shop_champions) == 5:
+            for i, name in enumerate(shop_champions):
+                label = self._shop_labels[i]
+                if name:
+                    label.configure(text=name, fg_color="#1e1b4b", text_color=self.BLUE)
+                else:
+                    label.configure(text="空卡槽", fg_color=self.CELL, text_color="#64748b")
+
+        board_state = state.get("board_state", [])
+        if board_state:
+            for r in range(min(4, len(board_state))):
+                for c in range(min(7, len(board_state[r]))):
+                    item = board_state[r][c]
+                    cell = self._board_cells[r][c]
+                    if item:
+                        name = item.get("name", "在场弈子")
+                        star = item.get("star", 1)
+                        fg = "#b58900" if name == "在场弈子" else "#047857"
+                        cell.configure(fg_color=fg, text_color="white", text=f"{name}\n{star}★")
+                    else:
+                        cell.configure(fg_color=self.CELL, text_color="#64748b", text="+")
+
+        bench_state = state.get("bench_state", [])
+        if bench_state:
+            for i in range(min(9, len(bench_state))):
+                item = bench_state[i]
+                cell = self._bench_cells[i]
+                if item:
+                    name = item.get("name", "弈子")
+                    star = item.get("star", 1)
+                    cell.configure(fg_color="#1d4ed8", text_color="white", text=f"{name}\n{star}★")
+                else:
+                    cell.configure(fg_color=self.CELL, text_color="#64748b", text="-")
 
     def _on_screenshot(self, img):
-        """显示最新截图"""
-        h, w = img.shape[:2]
-        # 缩放到预览尺寸
-        max_w, max_h = 720, 400
+        self._last_img = img
+        if self._monitor_visible:
+            self._update_preview()
+
+    def _on_label_resize(self, event):
+        if self._last_img is None or not self._monitor_visible:
+            return
+
+        new_w = event.width
+        new_h = event.height
+        if abs(new_w - self._last_lbl_w) > 10 or abs(new_h - self._last_lbl_h) > 10:
+            self._last_lbl_w = new_w
+            self._last_lbl_h = new_h
+            self._update_preview()
+
+    def _update_preview(self):
+        if self._last_img is None or not self._monitor_visible:
+            return
+
+        lbl_w = self._last_lbl_w or self._preview_label.winfo_width()
+        lbl_h = self._last_lbl_h or self._preview_label.winfo_height()
+        if lbl_w <= 10 or lbl_h <= 10:
+            return
+
+        max_w = max(lbl_w - 18, 120)
+        max_h = max(lbl_h - 18, 120)
+        h, w = self._last_img.shape[:2]
         scale = min(max_w / w, max_h / h)
         new_w, new_h = int(w * scale), int(h * scale)
-        resized = cv2.resize(img, (new_w, new_h))
+        if new_w <= 0 or new_h <= 0:
+            return
+
+        resized = cv2.resize(self._last_img, (new_w, new_h), interpolation=cv2.INTER_AREA)
         rgb = cv2.cvtColor(resized, cv2.COLOR_BGR2RGB)
         pil_img = Image.fromarray(rgb)
-        ctk_img = ctk.CTkImage(light_image=pil_img, dark_image=pil_img, size=(new_w, new_h))
-        self._preview_label.configure(image=ctk_img, text="")
+        self._preview_image = ctk.CTkImage(light_image=pil_img, dark_image=pil_img, size=(new_w, new_h))
+        self._preview_label.configure(image=self._preview_image, text="")
 
     def _on_pending(self, action: dict):
-        """半自动模式：待确认操作"""
         reason = action.get("reason", "未知操作")
-        self._pending_label.configure(text=f"待确认: {reason}")
+        self._pending_label.configure(text=f"待确认: {reason}", text_color=self.AMBER)
         self._confirm_btn.configure(state="normal")
         self._reject_btn.configure(state="normal")
 
     def _on_confirm(self):
-        self._pending_label.configure(text="")
+        self._pending_label.configure(text="暂无待确认动作", text_color=self.MUTED)
         self._confirm_btn.configure(state="disabled")
         self._reject_btn.configure(state="disabled")
         self.event_bus.emit("user_confirm_action")
 
     def _on_reject(self):
-        self._pending_label.configure(text="")
+        self._pending_label.configure(text="暂无待确认动作", text_color=self.MUTED)
         self._confirm_btn.configure(state="disabled")
         self._reject_btn.configure(state="disabled")
         self.event_bus.emit("user_reject_action")
