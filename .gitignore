@@ -17,3 +17,6 @@ templates/s*/
 
 # Auto Claude data directory
 .auto-claude/
+
+# PilotDeck plans directory
+.pilotdeck/
