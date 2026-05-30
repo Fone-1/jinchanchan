@@ -10,7 +10,7 @@ from core.event_bus import EventBus
 
 
 class StatusPage(ctk.CTkFrame):
-    """首页采用“战术指挥台”布局：状态优先，监控画面可隐藏释放空间。"""
+    """首页采用"战术指挥台"布局：状态优先，监控画面可隐藏释放空间。"""
 
     BG = "#080b10"
     PANEL = "#111827"
@@ -23,12 +23,18 @@ class StatusPage(ctk.CTkFrame):
     AMBER = "#eab308"
     RED = "#ef4444"
 
+    # 对手棋盘专用配色
+    OPP_CELL = "#1a1a2e"
+    OPP_OCCUPIED = "#7c2d12"
+
     def __init__(self, parent, event_bus: EventBus):
         super().__init__(parent, fg_color=self.BG)
         self.event_bus = event_bus
         self._bench_cells = []
         self._board_cells = [[None] * 7 for _ in range(4)]
+        self._opponent_cells = [[None] * 7 for _ in range(4)]
         self._shop_labels = []
+        self._equip_labels = []
         self._monitor_visible = True
         self._layout_mode = ""
         self._last_img = None
@@ -161,70 +167,142 @@ class StatusPage(ctk.CTkFrame):
 
         body = ctk.CTkScrollableFrame(self._tactics_pane, fg_color="transparent", corner_radius=0)
         body.grid(row=1, column=0, sticky="nsew", padx=8, pady=(0, 8))
-        body.grid_columnconfigure(0, weight=1)
 
-        self._build_board(body)
-        self._build_bench(body)
-        self._build_shop(body)
+        # 两栏布局：左侧装备栏(固定窄宽度) + 右侧主内容(撑满)
+        body.grid_columnconfigure(0, weight=0)
+        body.grid_columnconfigure(1, weight=1)
+
+        self._build_equipment(body)        # col=0, rowspan=4
+        self._build_opponent_board(body)   # col=1, row=0  ← 对手在上
+        self._build_board(body)            # col=1, row=1
+        self._build_bench(body)            # col=1, row=2
+        self._build_shop(body)             # col=1, row=3
+
+    def _build_equipment(self, parent):
+        """左侧纵向装备栏，9 个槽位（UI 占位）"""
+        equip_frame = ctk.CTkFrame(
+            parent, fg_color=self.PANEL_ALT, corner_radius=7, width=76,
+        )
+        equip_frame.grid(row=0, column=0, rowspan=4, sticky="ns", padx=(0, 6), pady=4)
+        equip_frame.grid_propagate(False)
+
+        ctk.CTkLabel(
+            equip_frame,
+            text="装备",
+            font=("Microsoft YaHei UI", 11, "bold"),
+            text_color=self.AMBER,
+        ).pack(pady=(10, 6), padx=4)
+
+        self._equip_labels = []
+        for _ in range(9):
+            lbl = ctk.CTkLabel(
+                equip_frame,
+                text="",
+                width=64,
+                height=26,
+                corner_radius=5,
+                fg_color="transparent",
+                text_color=self.TEXT,
+                font=("Microsoft YaHei UI", 10),
+            )
+            lbl.pack(padx=4, pady=2)
+            self._equip_labels.append(lbl)
+
+    def _build_opponent_board(self, parent):
+        """对手棋盘 4x7，紧凑布局，深紫配色区分"""
+        opp_frame = ctk.CTkFrame(parent, fg_color="transparent")
+        opp_frame.grid(row=0, column=1, sticky="ew", padx=4, pady=(4, 8))
+        opp_frame.grid_columnconfigure(0, weight=1)
+
+        ctk.CTkLabel(
+            opp_frame,
+            text="对手棋盘 4 x 7",
+            font=("Microsoft YaHei UI", 12, "bold"),
+            text_color=self.RED,
+        ).grid(row=0, column=0, sticky="w", padx=6, pady=(0, 6))
+
+        for r in range(4):
+            row_frame = ctk.CTkFrame(opp_frame, fg_color="transparent")
+            row_frame.grid(row=r + 1, column=0, sticky="ew",
+                           padx=(24 if r % 2 else 6, 6), pady=2)
+            for c in range(7):
+                row_frame.grid_columnconfigure(c, weight=1, uniform="opp")
+                cell = ctk.CTkLabel(
+                    row_frame,
+                    text="+",
+                    font=("Microsoft YaHei UI", 9, "bold"),
+                    height=36,
+                    corner_radius=7,
+                    fg_color=self.OPP_CELL,
+                    text_color="#64748b",
+                )
+                cell.grid(row=0, column=c, padx=2, sticky="ew")
+                self._opponent_cells[r][c] = cell
 
     def _build_board(self, parent):
+        """我方战斗盘面 4x7，响应式 grid 布局"""
         board_frame = ctk.CTkFrame(parent, fg_color="transparent")
-        board_frame.grid(row=0, column=0, sticky="ew", padx=4, pady=(4, 12))
+        board_frame.grid(row=1, column=1, sticky="ew", padx=4, pady=(0, 8))
+        board_frame.grid_columnconfigure(0, weight=1)
 
         ctk.CTkLabel(
             board_frame,
             text="战斗盘面 4 x 7",
             font=("Microsoft YaHei UI", 12, "bold"),
             text_color=self.MUTED,
-        ).pack(anchor="w", padx=6, pady=(0, 6))
+        ).grid(row=0, column=0, sticky="w", padx=6, pady=(0, 6))
 
         for r in range(4):
             row_frame = ctk.CTkFrame(board_frame, fg_color="transparent")
-            row_frame.pack(anchor="w", padx=(26 if r % 2 else 6, 6), pady=2)
+            row_frame.grid(row=r + 1, column=0, sticky="ew",
+                           padx=(24 if r % 2 else 6, 6), pady=2)
             for c in range(7):
+                row_frame.grid_columnconfigure(c, weight=1, uniform="board")
                 cell = ctk.CTkLabel(
                     row_frame,
                     text="+",
                     font=("Microsoft YaHei UI", 10, "bold"),
-                    width=44,
                     height=44,
                     corner_radius=8,
                     fg_color=self.CELL,
                     text_color="#64748b",
                 )
-                cell.pack(side="left", padx=2)
+                cell.grid(row=0, column=c, padx=2, sticky="ew")
                 self._board_cells[r][c] = cell
 
     def _build_bench(self, parent):
+        """备战席 1x9，响应式 grid 布局"""
         bench_frame = ctk.CTkFrame(parent, fg_color="transparent")
-        bench_frame.grid(row=1, column=0, sticky="ew", padx=4, pady=(0, 12))
+        bench_frame.grid(row=2, column=1, sticky="ew", padx=4, pady=(0, 8))
+        bench_frame.grid_columnconfigure(0, weight=1)
 
         ctk.CTkLabel(
             bench_frame,
             text="备战席 1 x 9",
             font=("Microsoft YaHei UI", 12, "bold"),
             text_color=self.MUTED,
-        ).pack(anchor="w", padx=6, pady=(0, 6))
+        ).grid(row=0, column=0, sticky="w", padx=6, pady=(0, 6))
 
         row_bench = ctk.CTkFrame(bench_frame, fg_color="transparent")
-        row_bench.pack(anchor="w", padx=6)
-        for _ in range(9):
+        row_bench.grid(row=1, column=0, sticky="ew")
+        for i in range(9):
+            row_bench.grid_columnconfigure(i, weight=1, uniform="bench")
             cell = ctk.CTkLabel(
                 row_bench,
                 text="-",
                 font=("Microsoft YaHei UI", 10, "bold"),
-                width=36,
                 height=36,
                 corner_radius=7,
                 fg_color=self.CELL,
                 text_color="#64748b",
             )
-            cell.pack(side="left", padx=2)
+            cell.grid(row=0, column=i, padx=2, sticky="ew")
             self._bench_cells.append(cell)
 
     def _build_shop(self, parent):
+        """实时商店 5 卡，响应式布局"""
         shop_panel = ctk.CTkFrame(parent, fg_color="transparent")
-        shop_panel.grid(row=2, column=0, sticky="ew", padx=4, pady=(0, 8))
+        shop_panel.grid(row=3, column=1, sticky="ew", padx=4, pady=(0, 8))
         shop_panel.grid_columnconfigure(0, weight=1)
 
         ctk.CTkLabel(
@@ -363,6 +441,7 @@ class StatusPage(ctk.CTkFrame):
         self._level_label.configure(text=f"等级: {level}")
         self._stage_label.configure(text=f"阶段: {stage}")
 
+        # 商店弈子
         shop_champions = state.get("shop_champions", [])
         if shop_champions and len(shop_champions) == 5:
             for i, name in enumerate(shop_champions):
@@ -372,6 +451,7 @@ class StatusPage(ctk.CTkFrame):
                 else:
                     label.configure(text="空卡槽", fg_color=self.CELL, text_color="#64748b")
 
+        # 我方棋盘
         board_state = state.get("board_state", [])
         if board_state:
             for r in range(min(4, len(board_state))):
@@ -386,6 +466,7 @@ class StatusPage(ctk.CTkFrame):
                     else:
                         cell.configure(fg_color=self.CELL, text_color="#64748b", text="+")
 
+        # 备战席
         bench_state = state.get("bench_state", [])
         if bench_state:
             for i in range(min(9, len(bench_state))):
@@ -397,6 +478,31 @@ class StatusPage(ctk.CTkFrame):
                     cell.configure(fg_color="#1d4ed8", text_color="white", text=f"{name}\n{star}★")
                 else:
                     cell.configure(fg_color=self.CELL, text_color="#64748b", text="-")
+
+        # 装备栏（UI 占位，数据为空时显示空槽）
+        equipment = state.get("equipment", [])
+        for i, lbl in enumerate(self._equip_labels):
+            if i < len(equipment) and equipment[i]:
+                lbl.configure(text=equipment[i], fg_color="#4a3000", text_color=self.AMBER)
+            else:
+                lbl.configure(text="", fg_color="transparent")
+
+        # 对手棋盘（UI 占位，数据为空时显示空格子）
+        opponent_board = state.get("opponent_board", [])
+        if opponent_board:
+            for r in range(min(4, len(opponent_board))):
+                for c in range(min(7, len(opponent_board[r]))):
+                    item = opponent_board[r][c]
+                    cell = self._opponent_cells[r][c]
+                    if item:
+                        name = item.get("name", "?")
+                        star = item.get("star", 1)
+                        cell.configure(
+                            fg_color=self.OPP_OCCUPIED, text_color="white",
+                            text=f"{name}\n{star}★",
+                        )
+                    else:
+                        cell.configure(fg_color=self.OPP_CELL, text_color="#64748b", text="+")
 
     def _on_screenshot(self, img):
         self._last_img = img

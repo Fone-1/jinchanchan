@@ -27,13 +27,14 @@ class ScreenshotPlugin(BasePlugin):
 
         self.event_bus.on("device_connected", self._on_device_connected)
         self.event_bus.on("device_disconnected", self._on_device_disconnected)
+        self.event_bus.on("task_toggled", self._on_task_toggled)
 
     def init(self) -> None:
         logger.info("截图插件初始化完成")
 
     def start(self) -> None:
         self._running = True
-        self._start_capture()
+        # 不再自动启动截图循环，等待用户点击"启动任务"
 
     def stop(self) -> None:
         self._running = False
@@ -42,6 +43,19 @@ class ScreenshotPlugin(BasePlugin):
             self._thread.join(timeout=3)
         self._adb = None
         self._device = None
+
+    def _on_task_toggled(self, enabled: bool) -> None:
+        self._task_enabled = enabled
+        if enabled:
+            self._start_capture()
+        else:
+            self._stop_capture()
+        logger.info(f"截图采集{'已启动' if enabled else '已停止'}")
+
+    def _stop_capture(self) -> None:
+        self._stop_event.set()
+        if self._thread and self._thread.is_alive():
+            self._thread.join(timeout=3)
 
     def _on_device_connected(self, data: dict) -> None:
         self._adb = data.get("connector")

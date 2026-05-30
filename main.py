@@ -65,6 +65,7 @@ def main():
         "emulator_width": config_mgr.get("emulator.width", 1280),
         "emulator_height": config_mgr.get("emulator.height", 720),
         "debug": config_mgr.get("recognizer.debug", False),
+        "use_gpu": config_mgr.get("recognizer.use_gpu", True),
     })
     plugin_mgr.register(DecisionEnginePlugin, config_mgr.get("automation", {}))
     plugin_mgr.register(ActionExecutorPlugin, {
